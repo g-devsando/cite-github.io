@@ -1,0 +1,3002 @@
+<?php
+/* =========================================================
+   DATABASE CONNECTION
+   ========================================================= */
+
+session_start();
+
+$servername = "localhost";
+$username   = "root";
+$password   = "";
+$dbname     = "school_db";
+
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+if ($conn->connect_error) {
+    die("Database connection failed: " . $conn->connect_error);
+}
+
+$conn->set_charset("utf8mb4");
+
+
+/* =========================================================
+   MESSAGES
+   ========================================================= */
+
+$login_message = "";
+$register_message = "";
+$register_success = "";
+
+
+/* =========================================================
+   LOGOUT
+   ========================================================= */
+
+if (isset($_GET["logout"])) {
+
+    session_unset();
+    session_destroy();
+
+    header("Location: index.php");
+    exit;
+}
+
+
+/* =========================================================
+   REGISTER
+   ========================================================= */
+
+if (isset($_POST["register"])) {
+
+    $student_number = trim($_POST["student_number"] ?? "");
+    $lastname       = trim($_POST["lastname"] ?? "");
+    $firstname      = trim($_POST["firstname"] ?? "");
+    $middlename     = trim($_POST["middlename"] ?? "");
+    $program        = trim($_POST["program"] ?? "");
+    $email          = trim($_POST["email"] ?? "");
+    $password       = $_POST["password"] ?? "";
+    $confirm        = $_POST["confirm_password"] ?? "";
+
+
+    /* Check password */
+    if ($password !== $confirm) {
+
+        $register_message = "Passwords do not match.";
+
+    } else {
+
+        /* Check if email already exists */
+
+        $check = $conn->prepare(
+            $sql = "SELECT id FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1";
+$check = $conn->prepare($sql);
+
+if ($check === false) {
+    die("Database Error: " . $conn->error);
+}
+
+$check->bind_param("s", $email);
+
+
+        if ($check->num_rows > 0) {
+
+            $register_message =
+                "An account with that email already exists.";
+
+        } else {
+
+            /* Hash password */
+
+            $hashed_password = password_hash(
+                $password,
+                PASSWORD_DEFAULT
+            );
+
+
+            /* Insert user */
+
+            $stmt = $conn->prepare(
+                "INSERT INTO users
+                (student_number, lastname, firstname, middlename, program, email, password)
+                VALUES (?, ?, ?, ?, ?, ?, ?)"
+            );
+
+            $stmt->bind_param(
+                "sssssss",
+                $student_number,
+                $lastname,
+                $firstname,
+                $middlename,
+                $program,
+                $email,
+                $hashed_password
+            );
+
+
+            if ($stmt->execute()) {
+
+                $register_success =
+                    "Account created successfully. You can now log in.";
+
+            } else {
+
+                $register_message =
+                    "Registration failed: " . $stmt->error;
+            }
+
+            $stmt->close();
+        }
+
+        $check->close();
+    }
+}
+
+
+/* =========================================================
+   LOGIN
+   ========================================================= */
+
+if (isset($_POST["login"])) {
+
+    $email    = trim($_POST["email"] ?? "");
+    $password = $_POST["password"] ?? "";
+
+
+    $stmt = $conn->prepare(
+        "SELECT
+            id,
+            student_number,
+            lastname,
+            firstname,
+            middlename,
+            program,
+            email,
+            password
+         FROM users
+         WHERE LOWER(email) = LOWER(?)
+         LIMIT 1"
+    );
+
+    $stmt->bind_param("s", $email);
+    $stmt->execute();
+
+    $result = $stmt->get_result();
+
+
+    if ($result->num_rows === 1) {
+
+        $user = $result->fetch_assoc();
+
+
+        if (password_verify($password, $user["password"])) {
+
+            $_SESSION["user_id"]        = $user["id"];
+            $_SESSION["email"]          = $user["email"];
+            $_SESSION["student_number"] = $user["student_number"];
+            $_SESSION["lastname"]       = $user["lastname"];
+            $_SESSION["firstname"]      = $user["firstname"];
+            $_SESSION["middlename"]     = $user["middlename"];
+            $_SESSION["program"]        = $user["program"];
+
+
+            header("Location: index.php");
+            exit;
+
+        } else {
+
+            $login_message = "Incorrect email or password.";
+        }
+
+    } else {
+
+        $login_message = "Incorrect email or password.";
+    }
+
+    $stmt->close();
+}
+
+
+/* =========================================================
+   EDIT PROFILE
+   ========================================================= */
+
+if (
+    isset($_POST["update_profile"]) &&
+    isset($_SESSION["user_id"])
+) {
+
+    $user_id = $_SESSION["user_id"];
+
+    $firstname  = trim($_POST["edit_firstname"] ?? "");
+    $middlename = trim($_POST["edit_middlename"] ?? "");
+    $lastname   = trim($_POST["edit_lastname"] ?? "");
+    $program    = trim($_POST["edit_program"] ?? "");
+
+
+    $stmt = $conn->prepare(
+        "UPDATE users
+         SET firstname = ?,
+             middlename = ?,
+             lastname = ?,
+             program = ?
+         WHERE id = ?"
+    );
+
+    $stmt->bind_param(
+        "ssssi",
+        $firstname,
+        $middlename,
+        $lastname,
+        $program,
+        $user_id
+    );
+
+
+    if ($stmt->execute()) {
+
+        $_SESSION["firstname"]  = $firstname;
+        $_SESSION["middlename"] = $middlename;
+        $_SESSION["lastname"]   = $lastname;
+        $_SESSION["program"]    = $program;
+    }
+
+
+    $stmt->close();
+
+    header("Location: index.php#profile");
+    exit;
+}
+
+
+/* =========================================================
+   PAGE ROUTING
+   ========================================================= */
+
+$page = isset($_GET["page"])
+    ? $_GET["page"]
+    : "login";
+
+$logged_in = isset($_SESSION["user_id"]);
+
+$editing_profile =
+    isset($_GET["edit"]) &&
+    $_GET["edit"] == "1";
+
+?>
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<title>CITE | De La Salle Lipa</title>
+
+
+<style>
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #fff;
+    color: #222;
+}
+
+
+/* =========================================
+   LOGIN / ACCOUNT SYSTEM
+========================================= */
+
+.auth-page {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 40px 20px;
+
+    background:
+        linear-gradient(
+            rgba(70, 0, 0, 0.82),
+            rgba(145, 0, 15, 0.82)
+        ),
+        url("https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=2000&q=85");
+
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}
+
+.auth-box {
+    width: 100%;
+    max-width: 470px;
+    background: rgba(255,255,255,0.98);
+    border-radius: 25px;
+    padding: 45px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.4);
+    animation: appear 0.7s ease;
+}
+
+.auth-logo {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 20px;
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auth-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.auth-box h1 {
+    text-align: center;
+    color: #8f1118;
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+.auth-subtitle {
+    text-align: center;
+    color: #777;
+    margin-bottom: 30px;
+}
+
+.form-group {
+    margin-bottom: 18px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 7px;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    outline: none;
+    font-size: 15px;
+    transition: 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: #b5121b;
+    box-shadow: 0 0 0 3px rgba(181,18,27,0.08);
+}
+
+.auth-button {
+    width: 100%;
+    padding: 15px;
+    border: none;
+    border-radius: 8px;
+    background: #b5121b;
+    color: white;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-top: 8px;
+}
+
+.auth-button:hover {
+    background: #8f1118;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(181,18,27,0.3);
+}
+
+.auth-switch {
+    text-align: center;
+    margin-top: 22px;
+    color: #777;
+    font-size: 14px;
+}
+
+.auth-switch a {
+    color: #b5121b;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.auth-switch a:hover {
+    text-decoration: underline;
+}
+
+.error {
+    background: #ffe5e5;
+    color: #a50000;
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    margin-bottom: 18px;
+    font-size: 14px;
+}
+
+.success {
+    background: #e5ffe5;
+    color: #087c08;
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    margin-bottom: 18px;
+    font-size: 14px;
+}
+
+
+/* =========================================
+   NAVIGATION
+========================================= */
+
+header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1000;
+    padding: 15px 6%;
+    background: rgba(255,255,255,0.97);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-box {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.logo-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.logo-text {
+    color: #8f1118;
+    font-weight: 800;
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+nav {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+nav a {
+    color: #333;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+    transition: 0.3s;
+}
+
+nav a:hover {
+    color: #b5121b;
+}
+
+.profile-nav {
+    background: #b5121b;
+    color: white !important;
+    padding: 10px 18px;
+    border-radius: 7px;
+}
+
+.logout-nav {
+    background: #222;
+    color: white !important;
+    padding: 10px 18px;
+    border-radius: 7px;
+}
+
+
+/* =========================================
+   HOME
+========================================= */
+
+.hero {
+    min-height: 100vh;
+    padding: 150px 7% 80px;
+    display: flex;
+    align-items: center;
+    position: relative;
+
+    background:
+        linear-gradient(
+            90deg,
+            rgba(55,0,0,0.92),
+            rgba(115,0,10,0.78),
+            rgba(181,18,27,0.5)
+        ),
+        url("https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=2000&q=85");
+
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: white;
+}
+
+.hero-content {
+    width: 60%;
+}
+
+.small-title {
+    display: inline-block;
+    padding: 9px 18px;
+    border-radius: 30px;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.4);
+    margin-bottom: 25px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.hero h1 {
+    font-size: clamp(45px,6vw,80px);
+    line-height: 1;
+    margin-bottom: 25px;
+    font-weight: 900;
+}
+
+.hero h1 span {
+    color: #ffb4b7;
+}
+
+.hero-description {
+    max-width: 800px;
+    font-size: 18px;
+    line-height: 1.8;
+    margin-bottom: 35px;
+}
+
+.hero-buttons {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.btn {
+    padding: 15px 28px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 700;
+    transition: 0.3s;
+}
+
+.btn-red {
+    background: white;
+    color: #b5121b;
+}
+
+.btn-white {
+    border: 2px solid white;
+    color: white;
+    background: transparent;
+}
+
+.btn:hover {
+    transform: translateY(-4px);
+}
+
+
+/* =========================================
+   QUICK LINKS
+========================================= */
+
+.quick-links {
+    background: #b5121b;
+    padding: 35px 7%;
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    gap: 20px;
+}
+
+.quick-card {
+    color: white;
+    text-align: center;
+    padding: 25px;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 15px;
+    transition: 0.3s;
+}
+
+.quick-card:hover {
+    background: white;
+    color: #b5121b;
+    transform: translateY(-6px);
+}
+
+.quick-card .icon {
+    font-size: 30px;
+    margin-bottom: 10px;
+}
+
+
+/* =========================================
+   PROGRAM INTRO
+========================================= */
+
+.program-intro {
+    text-align: center;
+    padding: 100px 20px 60px;
+}
+
+.section-label {
+    color: #b5121b;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+}
+
+.program-intro h2 {
+    font-size: clamp(35px,5vw,55px);
+    margin-bottom: 20px;
+}
+
+.program-intro h2 span {
+    color: #b5121b;
+}
+
+.program-intro p {
+    max-width: 850px;
+    margin: auto;
+    color: #666;
+    font-size: 18px;
+    line-height: 1.7;
+}
+
+.program-button {
+    display: inline-block;
+    margin-top: 30px;
+    padding: 15px 30px;
+    background: #b5121b;
+    color: white;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 700;
+}
+
+
+/* =========================================
+   PROGRAMS
+========================================= */
+
+.programs {
+    padding: 80px 7% 110px;
+    background: #fafafa;
+}
+
+.program-heading {
+    text-align: center;
+    margin-bottom: 55px;
+}
+
+.program-heading h2 {
+    font-size: 42px;
+    margin-bottom: 12px;
+}
+
+.program-heading p {
+    color: #777;
+}
+
+.program-grid {
+    max-width: 1300px;
+    margin: auto;
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    gap: 25px;
+}
+
+.program-card {
+    background: white;
+    padding: 35px;
+    border-radius: 16px;
+    border: 1px solid #eee;
+    transition: 0.4s;
+    position: relative;
+    overflow: hidden;
+}
+
+.program-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    background: #b5121b;
+}
+
+.program-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 20px 45px rgba(0,0,0,0.12);
+}
+
+.program-number {
+    color: #b5121b;
+    font-weight: 800;
+    font-size: 13px;
+    margin-bottom: 20px;
+}
+
+.program-card h3 {
+    color: #91151b;
+    font-size: 24px;
+    margin-bottom: 18px;
+}
+
+.program-card p {
+    color: #555;
+    line-height: 1.7;
+    min-height: 105px;
+}
+
+.learn {
+    display: inline-block;
+    margin-top: 25px;
+    color: #b5121b;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+
+/* =========================================
+   ACTIVITIES
+========================================= */
+
+.activities {
+    padding: 100px 7%;
+    background: #d9534f;
+    color: white;
+    text-align: center;
+}
+
+.activities h2 {
+    font-size: 50px;
+    margin-bottom: 20px;
+}
+
+.activities p {
+    max-width: 850px;
+    margin: 0 auto 40px;
+    line-height: 1.8;
+}
+
+.activities-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-top: 40px;
+}
+
+.activity-card {
+    background: white;
+    color: #333;
+    border-radius: 12px;
+    overflow: hidden;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+}
+
+.activity-card-header {
+    height: 160px;
+    width: 100%;
+    overflow: hidden;
+}
+
+.activity-card-header img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.4s ease;
+}
+
+.activity-card:hover .activity-card-header img {
+    transform: scale(1.08);
+}
+
+.activity-card-body {
+    padding: 20px;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.activity-number {
+    color: #b5121b;
+    font-weight: 800;
+    font-size: 18px;
+    margin-bottom: 8px;
+}
+
+.activity-card-body h3 {
+    font-size: 16px;
+    margin-bottom: 12px;
+    color: #111;
+}
+
+.activity-card-body p {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.5;
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+.activity-card-body .learn {
+    margin-top: auto;
+    font-size: 12px;
+}
+
+.why-join {
+    margin-top: 80px;
+}
+
+.why-join h3 {
+    font-size: 28px;
+    margin-bottom: 30px;
+    letter-spacing: 1px;
+}
+
+.reasons-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+}
+
+.reason-card {
+    background: white;
+    color: #333;
+    padding: 25px 20px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.reason-icon {
+    font-size: 24px;
+    margin-bottom: 12px;
+}
+
+.reason-card h4 {
+    font-size: 14px;
+    font-weight: 800;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+
+.reason-card p {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.5;
+    margin: 0;
+}
+
+
+/* =========================================
+   ABOUT
+========================================= */
+
+.about {
+    padding: 100px 7%;
+    text-align: center;
+    background: #fdf6f6;
+}
+
+.about h2 {
+    font-size: 45px;
+    margin-bottom: 20px;
+}
+
+.about h2 span {
+    color: #b5121b;
+}
+
+.about-intro-p {
+    max-width: 900px;
+    margin: auto;
+    color: #555;
+    font-size: 18px;
+    line-height: 1.8;
+}
+
+.about-stats {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin: 30px 0 50px;
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+    padding: 10px 20px;
+    border-radius: 30px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+}
+
+.stat-icon {
+    width: 35px;
+    height: 35px;
+    background: #b5121b;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.stat-text {
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    line-height: 1.2;
+}
+
+.vm-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30px;
+    max-width: 1100px;
+    margin: 0 auto 70px;
+}
+
+.vm-card {
+    background: #e8c5c8;
+    padding: 35px;
+    border-radius: 20px;
+    text-align: left;
+}
+
+.vm-card h3 {
+    color: #8f1118;
+    font-size: 18px;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+    font-weight: 800;
+}
+
+.vm-card p {
+    color: #444;
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.core-values-section {
+    margin-top: 40px;
+}
+
+.core-values-section h3 {
+    color: #8f1118;
+    font-size: 26px;
+    letter-spacing: 1px;
+    margin-bottom: 35px;
+    text-transform: uppercase;
+}
+
+.values-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 30px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.value-card h4 {
+    color: #8f1118;
+    font-size: 18px;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    font-weight: 800;
+}
+
+.value-card p {
+    color: #555;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+
+/* =========================================
+   CONTACT
+========================================= */
+
+.contact-section {
+    padding: 100px 7%;
+    background: #fff;
+}
+
+.contact-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+}
+
+.contact-info {
+    text-align: left;
+}
+
+.contact-info h2 {
+    font-size: 38px;
+    margin-bottom: 15px;
+    color: #8f1118;
+}
+
+.contact-info p {
+    color: #666;
+    margin-bottom: 30px;
+    line-height: 1.6;
+}
+
+.contact-detail-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.contact-detail-icon {
+    width: 45px;
+    height: 45px;
+    background: #b5121b;
+    color: white;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.contact-detail-text h4 {
+    font-size: 16px;
+    color: #222;
+    margin-bottom: 4px;
+}
+
+.contact-detail-text p {
+    font-size: 14px;
+    color: #555;
+    margin: 0;
+}
+
+.contact-map {
+    border-radius: 15px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    height: 100%;
+    min-height: 380px;
+}
+
+.contact-map iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+
+/* =========================================
+   PROFILE
+========================================= */
+
+.profile-section {
+    min-height: 100vh;
+    padding: 140px 20px 80px;
+
+    background:
+        linear-gradient(
+            rgba(80,0,0,0.86),
+            rgba(145,0,15,0.86)
+        ),
+        url("https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=2000&q=85");
+
+    background-size: cover;
+    background-position: center;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.profile-card {
+    width: 100%;
+    max-width: 700px;
+    background: white;
+    border-radius: 25px;
+    padding: 45px;
+    box-shadow: 0 30px 70px rgba(0,0,0,0.4);
+    text-align: center;
+}
+
+.profile-avatar {
+    width: 110px;
+    height: 110px;
+    margin: 0 auto 20px;
+    background: #b5121b;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    font-weight: 900;
+}
+
+.profile-card h2 {
+    color: #8f1118;
+    margin-bottom: 8px;
+}
+
+.profile-role {
+    color: #777;
+    margin-bottom: 30px;
+}
+
+.profile-info {
+    text-align: left;
+    background: #fafafa;
+    border-radius: 15px;
+    padding: 25px;
+    margin-bottom: 25px;
+}
+
+.profile-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 13px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.profile-row:last-child {
+    border-bottom: none;
+}
+
+.profile-row strong {
+    color: #8f1118;
+}
+
+.profile-row span {
+    color: #555;
+}
+
+.profile-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
+.profile-button {
+    border: none;
+    padding: 13px 25px;
+    border-radius: 8px;
+    background: #b5121b;
+    color: white;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.profile-button.secondary {
+    background: #222;
+}
+
+.profile-edit-form {
+    text-align: left;
+    background: #fafafa;
+    border-radius: 15px;
+    padding: 25px;
+    margin-bottom: 25px;
+}
+
+
+/* =========================================
+   FOOTER
+========================================= */
+
+footer {
+    background: #502327;
+    color: white;
+    padding: 45px 7%;
+    text-align: left;
+}
+
+.footer-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 40px;
+    flex-wrap: wrap;
+}
+
+.footer-main {
+    flex: 1.2;
+    min-width: 300px;
+}
+
+.footer-main h3 {
+    font-size: 16px;
+    margin-bottom: 12px;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.footer-main p {
+    color: #ddd;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.footer-divider {
+    width: 1px;
+    background: rgba(255,255,255,0.2);
+    align-self: stretch;
+}
+
+.footer-info {
+    flex: 1.5;
+    display: flex;
+    gap: 30px;
+    flex-wrap: wrap;
+    min-width: 300px;
+}
+
+.footer-col {
+    font-size: 13px;
+    color: #ddd;
+}
+
+.footer-col strong {
+    color: white;
+    display: block;
+    margin-bottom: 5px;
+}
+
+
+/* =========================================
+   ANIMATION
+========================================= */
+
+@keyframes appear {
+
+    from {
+        opacity: 0;
+        transform: translateY(25px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+
+/* =========================================
+   MOBILE
+========================================= */
+
+@media(max-width:950px) {
+
+    header {
+        padding: 15px 4%;
+    }
+
+    nav {
+        gap: 12px;
+    }
+
+    .hero {
+        text-align: center;
+    }
+
+    .hero-content {
+        width: 100%;
+    }
+
+    .hero-buttons {
+        justify-content: center;
+    }
+
+    .quick-links {
+        grid-template-columns: 1fr;
+    }
+
+    .program-grid {
+        grid-template-columns: repeat(2,1fr);
+    }
+
+    .activities-grid,
+    .reasons-grid {
+        grid-template-columns: repeat(2,1fr);
+    }
+
+    .vm-container,
+    .contact-container {
+        grid-template-columns: 1fr;
+    }
+
+    .footer-divider {
+        display: none;
+    }
+}
+
+@media(max-width:650px) {
+
+    header {
+        position: relative;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    nav {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    nav a {
+        font-size: 12px;
+    }
+
+    .hero {
+        padding-top: 80px;
+    }
+
+    .hero h1 {
+        font-size: 45px;
+    }
+
+    .program-grid,
+    .activities-grid,
+    .reasons-grid,
+    .values-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .auth-box {
+        padding: 30px 25px;
+    }
+
+    .profile-card {
+        padding: 30px 20px;
+    }
+
+    .profile-row {
+        flex-direction: column;
+        gap: 5px;
+    }
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<?php if (!$logged_in): ?>
+
+
+    <?php if ($page === "register"): ?>
+
+
+    <!-- =====================================================
+         CREATE ACCOUNT PAGE
+    ===================================================== -->
+
+    <div id="registerPage" class="auth-page">
+
+        <div class="auth-box">
+
+            <div class="auth-logo">
+
+                <img
+                    src="https://scontent.fmnl17-1.fna.fbcdn.net/v/t39.30808-6/231335246_522183872400892_3762183522522354673_n.jpg?stp=dst-jpg_tt6&cstp=mx2048x2044&ctp=s2048x2044&_nc_cat=110&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=leG8kQOd5c0Q7kNvwEvPoBQ&_nc_oc=Adp8_0EnVbEcwdWw3ZLZUXhVChvqfndARQMdPig8eYvWnoii77iuAVlddS2B1FzsJqk&_nc_zt=23&_nc_ht=scontent.fmnl17-1.fna&_nc_gid=JtLVrorPw-i3YopJlCkoUw&_nc_ss=7b2a8&oh=00_AQEnkXIh_YH53OlrErsSLz7o2M5n1h0jBN37bm45V3ScJw&oe=6A934A45"
+                    alt="CITE Logo">
+
+            </div>
+
+            <h1>Create Account</h1>
+
+            <p class="auth-subtitle">
+                Join the CITE community
+            </p>
+
+
+            <?php if ($register_message != ""): ?>
+
+                <div class="error">
+                    <?php echo htmlspecialchars($register_message); ?>
+                </div>
+
+            <?php endif; ?>
+
+
+            <?php if ($register_success != ""): ?>
+
+                <div class="success">
+                    <?php echo htmlspecialchars($register_success); ?>
+                </div>
+
+            <?php endif; ?>
+
+
+            <form method="POST"
+                  action="index.php?page=register">
+
+
+                <div class="form-group">
+
+                    <label>Student Number</label>
+
+                    <input
+                        type="text"
+                        name="student_number"
+                        placeholder="Enter your student number"
+                        required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Last Name</label>
+
+                    <input
+                        type="text"
+                        name="lastname"
+                        placeholder="Enter your last name"
+                        required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>First Name</label>
+
+                    <input
+                        type="text"
+                        name="firstname"
+                        placeholder="Enter your first name"
+                        required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Middle Name</label>
+
+                    <input
+                        type="text"
+                        name="middlename"
+                        placeholder="Enter your middle name">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Program of Study</label>
+
+                    <select name="program" required>
+
+                        <option value="">
+                            Select your program
+                        </option>
+
+                        <option>BS Computer Science</option>
+
+                        <option>BS Information Technology</option>
+
+                        <option>BS Computer Engineering</option>
+
+                        <option>BS Electrical Engineering</option>
+
+                        <option>BS Industrial Engineering</option>
+
+                        <option>BS Architecture</option>
+
+                    </select>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Email Address</label>
+
+                    <input
+                        type="email"
+                        name="email"
+                        placeholder="Enter your email"
+                        required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Password</label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Create a password"
+                        required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Confirm Password</label>
+
+                    <input
+                        type="password"
+                        name="confirm_password"
+                        placeholder="Confirm your password"
+                        required>
+
+                </div>
+
+
+                <button
+                    type="submit"
+                    name="register"
+                    class="auth-button">
+
+                    CREATE ACCOUNT
+
+                </button>
+
+
+            </form>
+
+
+            <p class="auth-switch">
+
+                Already have an account?
+
+                <a href="index.php">
+                    Login
+                </a>
+
+            </p>
+
+        </div>
+
+    </div>
+
+
+    <?php else: ?>
+
+
+    <!-- =====================================================
+         LOGIN PAGE
+    ===================================================== -->
+
+    <div id="loginPage" class="auth-page">
+
+        <div class="auth-box">
+
+            <div class="auth-logo">
+
+                <img
+                    src="https://scontent.fmnl17-1.fna.fbcdn.net/v/t39.30808-6/231335246_522183872400892_3762183522522354673_n.jpg?stp=dst-jpg_tt6&cstp=mx2048x2044&ctp=s2048x2044&_nc_cat=110&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=leG8kQOd5c0Q7kNvwEvPoBQ&_nc_oc=Adp8_0EnVbEcwdWw3ZLZUXhVChvqfndARQMdPig8eYvWnoii77iuAVlddS2B1FzsJqk&_nc_zt=23&_nc_ht=scontent.fmnl17-1.fna&_nc_gid=JtLVrorPw-i3YopJlCkoUw&_nc_ss=7b2a8&oh=00_AQEnkXIh_YH53OlrErsSLz7o2M5n1h0jBN37bm45V3ScJw&oe=6A934A45"
+                    alt="CITE Logo">
+
+            </div>
+
+
+            <h1>Welcome Back</h1>
+
+            <p class="auth-subtitle">
+                College of Information, Technology and Engineering
+            </p>
+
+
+            <?php if ($login_message != ""): ?>
+
+                <div class="error">
+
+                    <?php
+                    echo htmlspecialchars($login_message);
+                    ?>
+
+                </div>
+
+            <?php endif; ?>
+
+
+            <form method="POST"
+                  action="index.php">
+
+
+                <div class="form-group">
+
+                    <label>Email Address</label>
+
+                    <input
+                        type="email"
+                        name="email"
+                        placeholder="Enter your email"
+                        required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Password</label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Enter your password"
+                        required>
+
+                </div>
+
+
+                <button
+                    type="submit"
+                    name="login"
+                    class="auth-button">
+
+                    LOGIN
+
+                </button>
+
+
+            </form>
+
+
+            <p class="auth-switch">
+
+                Don't have an account?
+
+                <a href="index.php?page=register">
+                    Create Account
+                </a>
+
+            </p>
+
+        </div>
+
+    </div>
+
+
+    <?php endif; ?>
+
+
+<?php else: ?>
+
+
+<!-- =====================================================
+     MAIN WEBSITE
+===================================================== -->
+
+<div id="mainWebsite">
+
+
+<header>
+
+    <div class="logo">
+
+        <div class="logo-box">
+
+            <img
+                src="https://scontent.fmnl17-1.fna.fbcdn.net/v/t39.30808-6/231335246_522183872400892_3762183522522354673_n.jpg?stp=dst-jpg_tt6&cstp=mx2048x2044&ctp=s2048x2044&_nc_cat=110&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=leG8kQOd5c0Q7kNvwEvPoBQ&_nc_oc=Adp8_0EnVbEcwdWw3ZLZUXhVChvqfndARQMdPig8eYvWnoii77iuAVlddS2B1FzsJqk&_nc_zt=23&_nc_ht=scontent.fmnl17-1.fna&_nc_gid=JtLVrorPw-i3YopJlCkoUw&_nc_ss=7b2a8&oh=00_AQEnkXIh_YH53OlrErsSLz7o2M5n1h0jBN37bm45V3ScJw&oe=6A934A45"
+                alt="CITE Logo">
+
+        </div>
+
+        <div class="logo-text">
+
+            COLLEGE OF INFORMATION,<br>
+            TECHNOLOGY AND ENGINEERING
+
+        </div>
+
+    </div>
+
+
+    <nav>
+
+        <a href="#home">HOME</a>
+
+        <a href="#programs">PROGRAMS</a>
+
+        <a href="#activities">ACTIVITIES</a>
+
+        <a href="#about">ABOUT</a>
+
+        <a href="#contact">CONTACT</a>
+
+        <a href="#profile"
+           class="profile-nav">
+            MY PROFILE
+        </a>
+
+        <a href="index.php?logout=true"
+           class="logout-nav">
+            LOGOUT
+        </a>
+
+    </nav>
+
+</header>
+
+
+<!-- HOME -->
+
+<section class="hero" id="home">
+
+    <div class="hero-content">
+
+        <div class="small-title">
+            DE LA SALLE LIPA
+        </div>
+
+
+        <h1>
+            Innovate.<br>
+            <span>Create.</span><br>
+            Transform.
+        </h1>
+
+
+        <p class="hero-description">
+
+            The College of Information Technology of De La Salle Lipa provides quality
+            education and industry-driven learning experiences to help students develop
+            expertise in software development, cybersecurity, networking, engineering,
+            architecture and emerging technologies.
+
+        </p>
+
+
+        <p class="hero-description">
+
+            Welcome back,
+
+            <strong>
+                <?php
+                echo htmlspecialchars(
+                    $_SESSION["firstname"]
+                );
+                ?>
+            </strong>!
+
+        </p>
+
+
+        <div class="hero-buttons">
+
+            <a href="#programs"
+               class="btn btn-red">
+                Explore Programs
+            </a>
+
+            <a href="#profile"
+               class="btn btn-white">
+                My Profile
+            </a>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- QUICK LINKS -->
+
+<section class="quick-links">
+
+    <div class="quick-card">
+
+        <div class="icon">🎓</div>
+
+        <h3>For students</h3>
+
+        <p>
+            Explore programs
+        </p>
+
+    </div>
+
+
+    <div class="quick-card">
+
+        <div class="icon">💼</div>
+
+        <h3>For future careers</h3>
+
+        <p>
+            Discover Careers
+        </p>
+
+    </div>
+
+
+    <div class="quick-card">
+
+        <div class="icon">🤝</div>
+
+        <h3>For industry partners</h3>
+
+        <p>
+            Collaborate with us
+        </p>
+
+    </div>
+
+</section>
+
+
+<!-- PROGRAM INTRO -->
+
+<section class="program-intro">
+
+    <div class="section-label">
+        College Programs
+    </div>
+
+    <h2>
+        Shaping Tomorrow Through
+        <span>Innovation</span>
+    </h2>
+
+    <p>
+
+        The College of Information, Technology and Engineering prepares students
+        with knowledge, skills, and experiences needed to succeed in technology,
+        engineering, and design.
+
+    </p>
+
+    <a href="#programs"
+       class="program-button">
+
+        Explore Our Programs
+
+    </a>
+
+</section>
+
+
+<!-- PROGRAMS -->
+
+<section class="programs"
+         id="programs">
+
+    <div class="program-heading">
+
+        <div class="section-label">
+            Academic Programs
+        </div>
+
+        <h2>
+            Our Distinguished Degree Programs
+        </h2>
+
+        <p>
+            Discover academic programs designed to develop future professionals and innovators.
+        </p>
+
+    </div>
+
+
+    <div class="program-grid">
+
+
+        <div class="program-card">
+
+            <div class="program-number">
+                01
+            </div>
+
+            <h3>
+                BS Computer Science
+            </h3>
+
+            <p>
+                Develop programming, problem-solving, and software development skills to create innovative digital solutions.
+            </p>
+
+            <a href="#" class="learn">
+                Learn More →
+            </a>
+
+        </div>
+
+
+        <div class="program-card">
+
+            <div class="program-number">
+                02
+            </div>
+
+            <h3>
+                BS Information Technology
+            </h3>
+
+            <p>
+                Gain knowledge in networking, cybersecurity, cloud computing, and information systems for today's digital world.
+            </p>
+
+            <a href="#" class="learn">
+                Learn More →
+            </a>
+
+        </div>
+
+
+        <div class="program-card">
+
+            <div class="program-number">
+                03
+            </div>
+
+            <h3>
+                BS Computer Engineering
+            </h3>
+
+            <p>
+                Explore the connection between hardware and software while developing innovative technological solutions.
+            </p>
+
+            <a href="#" class="learn">
+                Learn More →
+            </a>
+
+        </div>
+
+
+        <div class="program-card">
+
+            <div class="program-number">
+                04
+            </div>
+
+            <h3>
+                BS Electrical Engineering
+            </h3>
+
+            <p>
+                Study electrical systems, circuits, and technologies that support modern industries and communities.
+            </p>
+
+            <a href="#" class="learn">
+                Learn More →
+            </a>
+
+        </div>
+
+
+        <div class="program-card">
+
+            <div class="program-number">
+                05
+            </div>
+
+            <h3>
+                BS Industrial Engineering
+            </h3>
+
+            <p>
+                Learn how to improve processes, reduce waste, and create efficient systems for organizations and industries.
+            </p>
+
+            <a href="#" class="learn">
+                Learn More →
+            </a>
+
+        </div>
+
+
+        <div class="program-card">
+
+            <div class="program-number">
+                06
+            </div>
+
+            <h3>
+                BS Architecture
+            </h3>
+
+            <p>
+                Develop creative and technical skills to design functional, sustainable, and inspiring spaces for the future.
+            </p>
+
+            <a href="#" class="learn">
+                Learn More →
+            </a>
+
+        </div>
+
+
+    </div>
+
+</section>
+
+
+<!-- ACTIVITIES -->
+
+<section class="activities"
+         id="activities">
+
+    <h2>
+        CITE Activities & Events
+    </h2>
+
+    <p>
+        CITE encourages students to go beyond the classroom through standard activities that promote innovation, collaboration, leadership, and service.
+    </p>
+
+    <a href="#"
+       class="btn btn-red"
+       style="padding:10px 20px;font-size:14px;">
+
+        Explore more activities →
+
+    </a>
+
+
+    <div class="activities-grid">
+
+
+        <div class="activity-card">
+
+            <div class="activity-card-header">
+
+                <img
+                    src="https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=800&q=80"
+                    alt="Tech Expo">
+
+            </div>
+
+            <div class="activity-card-body">
+
+                <div class="activity-number">
+                    01
+                </div>
+
+                <h3>
+                    CITE Innovations / Technology Event
+                </h3>
+
+                <p>
+                    CITE organizes activities centered on providing students with exposure to top technological innovations and professional experiences.
+                </p>
+
+                <a href="#" class="learn">
+                    LEARN MORE →
+                </a>
+
+            </div>
+
+        </div>
+
+
+        <div class="activity-card">
+
+            <div class="activity-card-header">
+
+                <img
+                    src="https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=800&q=80"
+                    alt="Robotics Workshop">
+
+            </div>
+
+            <div class="activity-card-body">
+
+                <div class="activity-number">
+                    02
+                </div>
+
+                <h3>
+                    Robotics / Engineering Activities
+                </h3>
+
+                <p>
+                    Designed to enhance hands-on prototyping and problem solving capabilities for practical engineering tasks.
+                </p>
+
+                <a href="#" class="learn">
+                    LEARN MORE →
+                </a>
+
+            </div>
+
+        </div>
+
+
+        <div class="activity-card">
+
+            <div class="activity-card-header">
+
+                <img
+                    src="https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&w=800&q=80"
+                    alt="Capstone Exhibition">
+
+            </div>
+
+            <div class="activity-card-body">
+
+                <div class="activity-number">
+                    03
+                </div>
+
+                <h3>
+                    Capstone Presentation / Exhibition
+                </h3>
+
+                <p>
+                    Academic showcases highlight innovation and practical applications created by senior engineering students.
+                </p>
+
+                <a href="#" class="learn">
+                    LEARN MORE →
+                </a>
+
+            </div>
+
+        </div>
+
+
+        <div class="activity-card">
+
+            <div class="activity-card-header">
+
+                <img
+                    src="https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&q=80"
+                    alt="Tech Seminars">
+
+            </div>
+
+            <div class="activity-card-body">
+
+                <div class="activity-number">
+                    04
+                </div>
+
+                <h3>
+                    CITE Tech Seminars
+                </h3>
+
+                <p>
+                    Knowledge-sharing seminars and technical workshops designed to explore trends and real-world IT applications.
+                </p>
+
+                <a href="#" class="learn">
+                    LEARN MORE →
+                </a>
+
+            </div>
+
+        </div>
+
+
+    </div>
+
+
+    <div class="why-join">
+
+        <h3>
+            WHY JOIN CITE ACTIVITIES?
+        </h3>
+
+
+        <div class="reasons-grid">
+
+
+            <div class="reason-card">
+
+                <div class="reason-icon">
+                    💡
+                </div>
+
+                <h4>
+                    Gain Practical Experience
+                </h4>
+
+                <p>
+                    Apply concepts through hands-on projects, workshops, and competitions.
+                </p>
+
+            </div>
+
+
+            <div class="reason-card">
+
+                <div class="reason-icon">
+                    👥
+                </div>
+
+                <h4>
+                    Grow as a Leader
+                </h4>
+
+                <p>
+                    Develop leadership, teamwork, and communication skills through activities.
+                </p>
+
+            </div>
+
+
+            <div class="reason-card">
+
+                <div class="reason-icon">
+                    🏆
+                </div>
+
+                <h4>
+                    Showcase Your Talent
+                </h4>
+
+                <p>
+                    Present your projects and excel in student competitions that showcase expertise.
+                </p>
+
+            </div>
+
+
+            <div class="reason-card">
+
+                <div class="reason-icon">
+                    💼
+                </div>
+
+                <h4>
+                    Prepare for the Future
+                </h4>
+
+                <p>
+                    Gain real-world experience and skills that prepare you for industry demands.
+                </p>
+
+            </div>
+
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- ABOUT -->
+
+<section class="about"
+         id="about">
+
+    <h2>
+        ABOUT CITE
+    </h2>
+
+
+    <p class="about-intro-p">
+
+        The <strong>College of Information, Technology and Engineering (CITE)</strong>
+        of De La Salle Lipa is committed to providing quality education in the fields
+        of computing, information technology, and engineering. We develop innovative,
+        competent, and ethical professionals who are equipped to meet the challenges
+        of the modern world and contribute to nation-building.
+
+    </p>
+
+
+    <div class="about-stats">
+
+
+        <div class="stat-item">
+
+            <div class="stat-icon">
+                👥
+            </div>
+
+            <div class="stat-text">
+                1,000+<br>
+                Students
+            </div>
+
+        </div>
+
+
+        <div class="stat-item">
+
+            <div class="stat-icon">
+                👨‍🏫
+            </div>
+
+            <div class="stat-text">
+                60+<br>
+                Faculty
+            </div>
+
+        </div>
+
+
+        <div class="stat-item">
+
+            <div class="stat-icon">
+                🏢
+            </div>
+
+            <div class="stat-text">
+                Modern<br>
+                Facilities
+            </div>
+
+        </div>
+
+
+        <div class="stat-item">
+
+            <div class="stat-icon">
+                🤝
+            </div>
+
+            <div class="stat-text">
+                Strong<br>
+                Linkages
+            </div>
+
+        </div>
+
+
+    </div>
+
+
+    <div class="vm-container">
+
+
+        <div class="vm-card">
+
+            <h3>
+                OUR VISION
+            </h3>
+
+            <p>
+                A Lasallian educational institution that builds a society founded on equity and justice, and on sustainable and inclusive development.
+            </p>
+
+        </div>
+
+
+        <div class="vm-card">
+
+            <h3>
+                OUR MISSION
+            </h3>
+
+            <p>
+                Inspired by our faith in God, by our Catholic traditions, and by the charism of St. John Baptist De La Salle, we, together and by association, are committed to giving quality and human Christian education to all.
+            </p>
+
+        </div>
+
+
+    </div>
+
+
+    <div class="core-values-section">
+
+        <h3>
+            OUR CORE VALUES
+        </h3>
+
+
+        <div class="values-grid">
+
+
+            <div class="value-card">
+
+                <h4>
+                    FAITH
+                </h4>
+
+                <p>
+                    Nurturing a deep relationship with God and living out Gospel values.
+                </p>
+
+            </div>
+
+
+            <div class="value-card">
+
+                <h4>
+                    SERVICE
+                </h4>
+
+                <p>
+                    Committing to excellence, compassion, and responding to the needs of others, especially the vulnerable and marginalized.
+                </p>
+
+            </div>
+
+
+            <div class="value-card">
+
+                <h4>
+                    COMMUNION
+                </h4>
+
+                <p>
+                    Working together as a united community to build a just and equitable society.
+                </p>
+
+            </div>
+
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- CONTACT -->
+
+<section class="contact-section"
+         id="contact">
+
+    <div class="contact-container">
+
+
+        <div class="contact-info">
+
+            <div class="section-label">
+                Get in Touch
+            </div>
+
+            <h2>
+                Contact & School Info
+            </h2>
+
+            <p>
+                Have questions about CITE programs, admissions, or events? Reach out to us through any of the channels below or visit our campus.
+            </p>
+
+
+            <div class="contact-detail-item">
+
+                <div class="contact-detail-icon">
+                    📍
+                </div>
+
+                <div class="contact-detail-text">
+
+                    <h4>
+                        Campus Location
+                    </h4>
+
+                    <p>
+                        1962 J.P. Laurel National Highway, Mataas na Lupa, Lipa City, Batangas 4217, Philippines
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div class="contact-detail-item">
+
+                <div class="contact-detail-icon">
+                    📞
+                </div>
+
+                <div class="contact-detail-text">
+
+                    <h4>
+                        Phone Number
+                    </h4>
+
+                    <p>
+                        +63 (43) 756-5555 / +63 (43) 981-1777
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div class="contact-detail-item">
+
+                <div class="contact-detail-icon">
+                    ✉️
+                </div>
+
+                <div class="contact-detail-text">
+
+                    <h4>
+                        Email Address
+                    </h4>
+
+                    <p>
+                        cite.helpdesk@dlsl.edu.ph / helpdesk@dlsl.edu.ph
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div class="contact-detail-item">
+
+                <div class="contact-detail-icon">
+                    🕒
+                </div>
+
+                <div class="contact-detail-text">
+
+                    <h4>
+                        Office Hours
+                    </h4>
+
+                    <p>
+                        Monday - Friday: 8:00 AM – 5:00 PM<br>
+                        Saturday: 8:00 AM – 12:00 PM
+                    </p>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="contact-map">
+
+            <iframe
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3869.839832860555!2d121.15494337584061!3d13.950005792942426!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x33bd6cd50bc0d0bd%3A0x28972a4ff5bb453b!2sDe%20La%20Salle%20Lipa!5e0!3m2!1sen!2sph!4v1700000000000!5m2!1sen!2sph"
+                allowfullscreen=""
+                loading="lazy">
+            </iframe>
+
+        </div>
+
+
+    </div>
+
+</section>
+
+
+<!-- PROFILE -->
+
+<section class="profile-section"
+         id="profile">
+
+    <div class="profile-card">
+
+
+        <div class="profile-avatar">
+
+            <?php
+            echo htmlspecialchars(
+                strtoupper(
+                    substr($_SESSION["firstname"], 0, 1)
+                )
+            );
+            ?>
+
+        </div>
+
+
+        <h2>
+
+            <?php
+            echo htmlspecialchars(
+                $_SESSION["firstname"] .
+                " " .
+                $_SESSION["lastname"]
+            );
+            ?>
+
+        </h2>
+
+
+        <p class="profile-role">
+            CITE Student
+        </p>
+
+
+        <?php if ($editing_profile): ?>
+
+
+        <!-- EDIT PROFILE -->
+
+        <form
+            method="POST"
+            action="index.php"
+            class="profile-edit-form">
+
+
+            <div class="form-group">
+
+                <label>
+                    First Name
+                </label>
+
+                <input
+                    type="text"
+                    name="edit_firstname"
+                    value="<?php
+                    echo htmlspecialchars(
+                        $_SESSION["firstname"]
+                    );
+                    ?>"
+                    required>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>
+                    Middle Name
+                </label>
+
+                <input
+                    type="text"
+                    name="edit_middlename"
+                    value="<?php
+                    echo htmlspecialchars(
+                        $_SESSION["middlename"]
+                    );
+                    ?>">
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>
+                    Last Name
+                </label>
+
+                <input
+                    type="text"
+                    name="edit_lastname"
+                    value="<?php
+                    echo htmlspecialchars(
+                        $_SESSION["lastname"]
+                    );
+                    ?>"
+                    required>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label>
+                    Program of Study
+                </label>
+
+                <select
+                    name="edit_program"
+                    required>
+
+
+                    <?php
+
+                    $programs = [
+
+                        "BS Computer Science",
+                        "BS Information Technology",
+                        "BS Computer Engineering",
+                        "BS Electrical Engineering",
+                        "BS Industrial Engineering",
+                        "BS Architecture"
+
+                    ];
+
+
+                    foreach ($programs as $p) {
+
+                        $selected =
+                            ($_SESSION["program"] === $p)
+                            ? "selected"
+                            : "";
+
+                        echo "<option value=\"" .
+                             htmlspecialchars($p) .
+                             "\" $selected>" .
+                             htmlspecialchars($p) .
+                             "</option>";
+                    }
+
+                    ?>
+
+
+                </select>
+
+            </div>
+
+
+            <div class="profile-buttons">
+
+                <button
+                    type="submit"
+                    name="update_profile"
+                    class="profile-button">
+
+                    SAVE CHANGES
+
+                </button>
+
+
+                <a
+                    href="index.php#profile"
+                    class="profile-button secondary">
+
+                    CANCEL
+
+                </a>
+
+            </div>
+
+
+        </form>
+
+
+        <?php else: ?>
+
+
+        <!-- PROFILE INFORMATION -->
+
+        <div class="profile-info">
+
+
+            <div class="profile-row">
+
+                <strong>
+                    Student Number
+                </strong>
+
+                <span>
+
+                    <?php
+                    echo htmlspecialchars(
+                        $_SESSION["student_number"]
+                    );
+                    ?>
+
+                </span>
+
+            </div>
+
+
+            <div class="profile-row">
+
+                <strong>
+                    Full Name
+                </strong>
+
+                <span>
+
+                    <?php
+
+                    echo htmlspecialchars(
+                        $_SESSION["firstname"] .
+                        " " .
+                        $_SESSION["middlename"] .
+                        " " .
+                        $_SESSION["lastname"]
+                    );
+
+                    ?>
+
+                </span>
+
+            </div>
+
+
+            <div class="profile-row">
+
+                <strong>
+                    Email
+                </strong>
+
+                <span>
+
+                    <?php
+                    echo htmlspecialchars(
+                        $_SESSION["email"]
+                    );
+                    ?>
+
+                </span>
+
+            </div>
+
+
+            <div class="profile-row">
+
+                <strong>
+                    Program
+                </strong>
+
+                <span>
+
+                    <?php
+                    echo htmlspecialchars(
+                        $_SESSION["program"]
+                    );
+                    ?>
+
+                </span>
+
+            </div>
+
+
+        </div>
+
+
+        <div class="profile-buttons">
+
+            <a
+                href="index.php?edit=1#profile"
+                class="profile-button">
+
+                EDIT PROFILE
+
+            </a>
+
+
+            <a
+                href="index.php?logout=true"
+                class="profile-button secondary">
+
+                LOGOUT
+
+            </a>
+
+        </div>
+
+
+        <?php endif; ?>
+
+
+    </div>
+
+</section>
+
+
+<!-- FOOTER -->
+
+<footer>
+
+    <div class="footer-content">
+
+
+        <div class="footer-main">
+
+            <h3>
+                COLLEGE OF INFORMATION, TECHNOLOGY AND ENGINEERING
+            </h3>
+
+            <p>
+                The College of Information, Technology and Engineering (CITE) is dedicated to providing quality education in information technology and engineering. It prepares students with the knowledge, skills, and values needed to become innovative, competent, and socially responsible professionals.
+            </p>
+
+        </div>
+
+
+        <div class="footer-divider"></div>
+
+
+        <div class="footer-info">
+
+
+            <div class="footer-col">
+
+                <strong>
+                    📍 Address
+                </strong>
+
+                1962 J.P. Laurel National Highway,<br>
+                Mataas na Lupa, Lipa City,<br>
+                Batangas 4217
+
+            </div>
+
+
+            <div class="footer-col">
+
+                <strong>
+                    🌐 Website & Email
+                </strong>
+
+                De La Salle Lipa<br>
+                cite.helpdesk@dlsl.edu.ph
+
+            </div>
+
+
+            <div class="footer-col">
+
+                <strong>
+                    📱 Social Media
+                </strong>
+
+                Facebook: De La Salle Lipa<br>
+                Tel: +63 (43) 756-5555
+
+            </div>
+
+
+        </div>
+
+
+    </div>
+
+</footer>
+
+
+</div>
+
+
+<?php endif; ?>
+
+
+</body>
+
+</html>
+
+<?php
+
+$conn->close();
+
+?>
